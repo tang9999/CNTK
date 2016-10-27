@@ -13,7 +13,7 @@ import numpy as np
 import sys
 import os
 from cntk import Trainer, distributed, device, persist
-from cntk.learner import momentum_sgd, learning_rate_schedule
+from cntk.learner import momentum_sgd, learning_rate_schedule, UnitType
 from cntk.ops import input_variable, constant, parameter, cross_entropy_with_softmax, combine, classification_error, times, element_times, pooling, AVG_POOLING, relu
 from cntk.io import ReaderConfig, ImageDeserializer
 from cntk.initializer import he_normal, glorot_uniform
@@ -67,8 +67,8 @@ def cifar_resnet(data_path, run_test, num_epochs, communicator=None, save_model_
     
     num_mbs = num_mb_per_epoch * num_epochs
 
-    lr_per_sample = [1/mb_size]*80+[0.1/mb_size]*40+[0.01/mb_size]
-    lr_schedule = learning_rate_schedule(lr_per_sample, units = mb_size * num_mb_per_epoch)
+    lr_per_minibatch = [(80,1),(40,0.1),(1,0.01)]
+    lr_schedule = learning_rate_schedule(lr_per_minibatch, mb_size * num_mb_per_epoch, UnitType.minibatch)
     momentum_time_constant = -mb_size/np.log(0.9)
 
     # create data parallel distributed trainer if needed

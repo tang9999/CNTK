@@ -155,10 +155,9 @@ def sequence_to_sequence_translator(debug_output=False, run_test=False):
     lr = 0.007
     minibatch_size = 72
     momentum_time_constant = 1100
-    m_schedule = momentum_schedule(momentum_time_constant)
     clipping_threshold_per_sample = 2.3
     gradient_clipping_with_truncation = True
-    learner = momentum_sgd(z.parameters, lr, m_schedule, clipping_threshold_per_sample, gradient_clipping_with_truncation)
+    learner = momentum_sgd(z.parameters, lr, momentum_time_constant, clipping_threshold_per_sample, gradient_clipping_with_truncation)
     trainer = Trainer(z, ce, errs, learner)
 
     # setup data

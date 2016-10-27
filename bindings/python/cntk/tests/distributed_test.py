@@ -21,8 +21,6 @@ def disabled_test_trainer(tmpdir):
     ce = cross_entropy_with_softmax(z, labels)
     errs = classification_error(z, labels)
 
-    m_schedule = momentum_schedule(1100)
-
     communicator = distributed.communicator(distributed.quantized_mpi_communicator(1))
     workers = communicator.workers()
     current_worker = communicator.current_worker()
@@ -36,7 +34,7 @@ def disabled_test_trainer(tmpdir):
     dist_trainer = distributed.data_parallel_distributed_trainer(communicator, False)
 
     trainer = Trainer(z, ce, errs, \
-            [sgd(z.parameters, 0.007, m_schedule, 0.5, True)],
+            [sgd(z.parameters, 0.007, 1100, 0.5, True)],
             distributed_trainer=dist_trainer)
     in1_value = [[1],[2]]
     label_value = [[0], [1]]

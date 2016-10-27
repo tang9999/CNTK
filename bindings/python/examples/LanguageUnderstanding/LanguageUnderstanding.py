@@ -76,12 +76,12 @@ def train(reader, model, max_epochs):
     num_mbs_to_show_result = 100
     momentum_as_time_constant = minibatch_size / -math.log(0.9)  # TODO: Change to round number. This is 664.39. 700?
 
-    lr_per_sample = [0.003]*2+[0.0015]*12+[0.0003] # LR schedule over epochs (we don't run that mayn epochs, but if we did, these are good values)
+    lr_per_sample = [(2,0.0030),(12,0.0015),(0,0.0003)] # LR schedule over epochs (we don't run that mayn epochs, but if we did, these are good values)
 
     # trainer object
-    lr_schedule = learning_rate_schedule(lr_per_sample, units=epoch_size)
+    lr_schedule = learning_rate_schedule(lr_per_sample, epoch_size)
     learner = adam_sgd(z.parameters,
-                       lr_per_sample=lr_schedule, momentum_time_constant=momentum_as_time_constant,
+                       lr=lr_schedule, momentum=momentum_as_time_constant,
                        low_memory=True,
                        gradient_clipping_threshold_per_sample=15, gradient_clipping_with_truncation=True)
 

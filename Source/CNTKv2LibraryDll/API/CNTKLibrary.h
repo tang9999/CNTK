@@ -668,7 +668,7 @@ namespace CNTK
         ///
         /// Construct a new Mask object of specified shape
         /// 
-        CNTK_API explicit NDMask(const NDShape& shape, const DeviceDescriptor& device = DeviceDescriptor::UseDefaultDevice());
+        CNTK_API explicit NDMask(const NDShape& shape, const DeviceDescriptor& device = DeviceDescriptor::CPUDevice());
 
         ///
         /// Destruct 'this' NDMask object

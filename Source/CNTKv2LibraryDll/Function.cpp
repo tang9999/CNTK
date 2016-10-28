@@ -370,32 +370,28 @@ namespace CNTK
                     if (leafVariablesCloneMap.find(cloneeInput) != leafVariablesCloneMap.end())
                         clonedInput = leafVariablesCloneMap.at(cloneeInput);
                     else
-                {
-                        if (cloneeInput.IsParameter() || cloneeInput.IsConstant())
-                {
-                    switch (parameterCloneMethod)
                     {
-                    case ParameterCloningMethod::Clone:
-                        clonedInput = cloneeInput.Clone();
-                        leafVariablesCloneMap[cloneeInput] = clonedInput;
-                        break;
-                    case ParameterCloningMethod::Share:
-                        clonedInput = cloneeInput;
-                        break;
-                    case ParameterCloningMethod::Freeze:
-                                if (cloneeInput.IsParameter())
-                        clonedInput = Constant(Parameter(cloneeInput).Value(), cloneeInput.Name());
-                                else
-                                    clonedInput = Constant(Constant(cloneeInput).Value(), cloneeInput.Name());
-
-                        leafVariablesCloneMap[cloneeInput] = clonedInput;
-                        break;
-                    default:
-                        LogicError("Unknown ParameterCloningMethod");
-            }
-        }
-                else
-                {
+                        if (cloneeInput.IsParameter())
+                        {
+                            switch (parameterCloneMethod)
+                            {
+                            case ParameterCloningMethod::Clone:
+                                clonedInput = cloneeInput.Clone();
+                                leafVariablesCloneMap[cloneeInput] = clonedInput;
+                                break;
+                            case ParameterCloningMethod::Share:
+                                clonedInput = cloneeInput;
+                                break;
+                            case ParameterCloningMethod::Freeze:
+                                clonedInput = Constant(Parameter(cloneeInput).Value(), cloneeInput.Name());
+                                leafVariablesCloneMap[cloneeInput] = clonedInput;
+                                break;
+                            default:
+                                LogicError("Unknown ParameterCloningMethod");
+                            }
+                        }
+                        else
+                        {
                             clonedInput = cloneeInput.Clone();
                             leafVariablesCloneMap[cloneeInput] = clonedInput;
                         }
@@ -1613,9 +1609,7 @@ namespace CNTK
             auto blendTimeConstant = functionConfig[PrimitiveFunction::AttributeNameBlendTimeConstant].Value<double>();
             auto epsilon = functionConfig[PrimitiveFunction::AttributeNameEpsilon].Value<double>();
             auto useCuDNNEngine = functionConfig[PrimitiveFunction::AttributeNameUseCuDNNEngine].Value<bool>();
-            size_t samplesSeen = 0;
-            if (functionConfig.Contains(PrimitiveFunction::AttributeNameSamplesSeen))
-                samplesSeen = functionConfig[PrimitiveFunction::AttributeNameSamplesSeen].Value<size_t>();
+            size_t samplesSeen = functionConfig[PrimitiveFunction::AttributeNameSamplesSeen].Value<size_t>();
 
             computationNodePtr = New<BatchNormalizationNode<ElementType>>(network->GetDeviceId(), internalNodeName, spatial, normalizationTimeConstant, blendTimeConstant, epsilon, !useCuDNNEngine, ImageLayoutKind::CHW, samplesSeen);
             break;
@@ -1817,6 +1811,13 @@ namespace CNTK
                     {
                         LogicError("The output Variable shape %S does not match the SampleLayout shape %s of the corresponding ComputationNode in the network", outputShape.AsString().c_str(), ((std::string)computationNodeSampleLayout).c_str());
                     }
+
+                    // Cache the list of all stateful ComputationNodes
+                    auto primitiveOwnerFunction = dynamic_cast<PrimitiveFunction*>(outputVar.Owner().get());
+
+                    // TODO: Dropout random seed is another piece of state that needs retention
+                    if (primitiveOwnerFunction->OpType() == PrimitiveOpType::BatchNormalization)
+                        m_statefulFunctionsMap[primitiveOwnerFunction] = computationNodePtr;
                 }
             }
 
@@ -2108,7 +2109,7 @@ namespace CNTK
             NDMaskPtr mask;
             if (maskNeeded)
             {
-                mask = MakeSharedObject<NDMask>(NDShape({ maxNumTimeSteps, numSequences }), device);
+                mask = MakeSharedObject<NDMask>(NDShape({ maxNumTimeSteps, numSequences }), DeviceDescriptor::CPUDevice());
                 for (size_t i = 0; i < numSequences; ++i)
                     if (sequenceBeginFlags[i])
                         mask->MarkSequenceBegin({0, i});
@@ -2322,7 +2323,7 @@ namespace CNTK
         {
             auto& matrix = getGradient ? computationNode->As<ComputationNode<float>>()->Gradient() : computationNode->As<ComputationNode<float>>()->Value();
             if (varValue == nullptr)
-                nodeValue = MakeSharedObject<PackedValue>(var.Shape(), std::make_shared<Matrix<float>>(matrix.AsReference()), layout, /*readOnly =*/ false);
+                nodeValue = MakeSharedObject<PackedValue>(var.Shape(), std::make_shared<Matrix<float>>(matrix.AsReference()), layout, /*readOnly =*/ !getGradient);
             else
                 nodeValue = GetValueObjectFromCNTKImplMatrixAndMBLayout<float>(var, matrix, layout);
             break;
@@ -2331,7 +2332,7 @@ namespace CNTK
         {
             auto& matrix = getGradient ? computationNode->As<ComputationNode<double>>()->Gradient() : computationNode->As<ComputationNode<double>>()->Value();
             if (varValue == nullptr)
-                nodeValue = MakeSharedObject<PackedValue>(var.Shape(), std::make_shared<Matrix<double>>(matrix.AsReference()), layout, /*readOnly =*/ false);
+                nodeValue = MakeSharedObject<PackedValue>(var.Shape(), std::make_shared<Matrix<double>>(matrix.AsReference()), layout, /*readOnly =*/ !getGradient);
             else
                 nodeValue = GetValueObjectFromCNTKImplMatrixAndMBLayout<double>(var, matrix, layout);
             break;
@@ -2342,7 +2343,7 @@ namespace CNTK
         }
 
         if (varValue == nullptr)
-            varValue = nodeValue->DeepClone();
+            varValue = nodeValue;
         else
             varValue->CopyFrom(*nodeValue);
     }
@@ -2490,6 +2491,22 @@ namespace CNTK
         ScopedNetworkOperationMode modeGuard(m_computationNetwork, outputsToRetainBackwardStateFor.empty() ? NetworkOperationMode::inferring : NetworkOperationMode::training);
 
         m_computationNetwork->ForwardProp(outputsToEvaluate);
+
+        // Update any state updates from stateful computation nodes
+        for (auto statefulFunctionNodePair : m_statefulFunctionsMap)
+        {
+            auto statefulFunction = statefulFunctionNodePair.first;
+            if (statefulFunction->OpType() == PrimitiveOpType::BatchNormalization)
+            {
+                auto& samplesSeenAttribute = statefulFunction->m_attributes[PrimitiveFunction::AttributeNameSamplesSeen].Value<size_t>();
+                if (dataType == DataType::Float)
+                    samplesSeenAttribute = statefulFunctionNodePair.second->As<BatchNormalizationNode<float>>()->GetSamplesSeen();
+                else if (dataType == DataType::Double)
+                    samplesSeenAttribute = statefulFunctionNodePair.second->As<BatchNormalizationNode<double>>()->GetSamplesSeen();
+                else
+                    InvalidArgument("Unsupported DataType %s", DataTypeName(dataType));
+            }
+        }
 
         GetNetworkOutputs(outputs);
 
@@ -2963,6 +2980,7 @@ namespace CNTK
         additionalProperties[PrimitiveFunction::AttributeNameBlendTimeConstant] = blendTimeConstant;
         additionalProperties[PrimitiveFunction::AttributeNameEpsilon] = epsilon;
         additionalProperties[PrimitiveFunction::AttributeNameUseCuDNNEngine] = useCuDNNEngine;
+        additionalProperties[PrimitiveFunction::AttributeNameSamplesSeen] = (size_t)0;
 
         std::vector<Variable> operands = { operand, scale, bias, runningMean, runningInvStd };
         return CompositeFunction::Create(MakeSharedObject<PrimitiveFunction>(PrimitiveOpType::BatchNormalization,

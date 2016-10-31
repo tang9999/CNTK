@@ -192,7 +192,7 @@ public:
     void AllocateAllMatrices(const std::vector<ComputationNodeBasePtr>& evalRootNodes, const std::vector<ComputationNodeBasePtr>& outValueRootNodes, ComputationNodeBasePtr trainRootNode);
 
     // From the set of nodes extract all nodes which are used as accumulator nodes.
-    std::set<ComputationNodeBasePtr> ComputationNetwork::ExtractNodesWhichAccumulateResult(std::set<ComputationNodeBasePtr> nodes);
+    std::set<ComputationNodeBasePtr> ExtractNodesWhichAccumulateResult(std::set<ComputationNodeBasePtr> nodes);
 
 private:
     void PrintMemorySharingStructure(const std::vector<ComputationNodeBasePtr>& nodes);
